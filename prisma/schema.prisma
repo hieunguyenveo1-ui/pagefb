@@ -1,0 +1,178 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+enum FacebookAccountStatus {
+  CONNECTED
+  EXPIRED
+  REVOKED
+}
+
+enum FacebookPageStatus {
+  ACTIVE
+  NEEDS_REAUTH
+  DISABLED
+}
+
+enum PostStatus {
+  DRAFT
+  SCHEDULED
+  QUEUED
+  PUBLISHING
+  PUBLISHED
+  FAILED
+  CANCELLED
+}
+
+enum PostTargetStatus {
+  PENDING
+  QUEUED
+  PUBLISHED
+  FAILED
+  SKIPPED
+}
+
+enum PublishJobStatus {
+  PENDING
+  RUNNING
+  SUCCESS
+  FAILED
+  CANCELLED
+}
+
+enum AuditAction {
+  ACCOUNT_CREATED
+  PAGE_CREATED
+  POST_CREATED
+  POST_UPDATED
+  POST_SCHEDULED
+  POST_PUBLISHED
+  POST_FAILED
+  SAFETY_WARNING
+}
+
+model Workspace {
+  id               String            @id @default(cuid())
+  name             String
+  slug             String            @unique
+  dailyPostLimit   Int               @default(12)
+  hourlyPostLimit  Int               @default(4)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  accounts         FacebookAccount[]
+  pages            FacebookPage[]
+  posts            Post[]
+  publishJobs      PublishJob[]
+  auditLogs        AuditLog[]
+}
+
+model FacebookAccount {
+  id              String                @id @default(cuid())
+  workspaceId     String
+  facebookUserId  String
+  name            String
+  email           String?
+  avatarUrl       String?
+  accessTokenHint String?
+  status          FacebookAccountStatus @default(CONNECTED)
+  connectedAt     DateTime              @default(now())
+  tokenExpiresAt  DateTime?
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+  workspace       Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  pages           FacebookPage[]
+
+  @@unique([workspaceId, facebookUserId])
+}
+
+model FacebookPage {
+  id                String             @id @default(cuid())
+  workspaceId       String
+  accountId         String
+  facebookPageId    String
+  name              String
+  category          String?
+  pictureUrl        String?
+  accessTokenHint   String?
+  status            FacebookPageStatus @default(ACTIVE)
+  followersCount    Int                @default(0)
+  lastSyncedAt      DateTime?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  workspace         Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  account           FacebookAccount    @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  targets           PostTarget[]
+  publishJobs       PublishJob[]
+
+  @@unique([workspaceId, facebookPageId])
+}
+
+model Post {
+  id              String        @id @default(cuid())
+  workspaceId     String
+  title           String
+  message         String
+  linkUrl         String?
+  mediaUrl        String?
+  scheduledAt     DateTime?
+  status          PostStatus    @default(DRAFT)
+  safetyScore     Int           @default(0)
+  safetyWarnings  String        @default("[]")
+  createdByName   String        @default("Admin")
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  workspace       Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  targets         PostTarget[]
+  publishJobs     PublishJob[]
+}
+
+model PostTarget {
+  id             String           @id @default(cuid())
+  postId         String
+  pageId         String
+  status         PostTargetStatus @default(PENDING)
+  facebookPostId String?
+  errorMessage   String?
+  publishedAt    DateTime?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  post           Post             @relation(fields: [postId], references: [id], onDelete: Cascade)
+  page           FacebookPage     @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  @@unique([postId, pageId])
+}
+
+model PublishJob {
+  id             String           @id @default(cuid())
+  workspaceId    String
+  postId         String
+  pageId         String
+  status         PublishJobStatus @default(PENDING)
+  runAt          DateTime
+  attempts       Int              @default(0)
+  lastError      String?
+  lockedAt       DateTime?
+  completedAt    DateTime?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  workspace      Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  post           Post             @relation(fields: [postId], references: [id], onDelete: Cascade)
+  page           FacebookPage     @relation(fields: [pageId], references: [id], onDelete: Cascade)
+}
+
+model AuditLog {
+  id          String      @id @default(cuid())
+  workspaceId String
+  action      AuditAction
+  actorName   String      @default("System")
+  entityType  String
+  entityId    String
+  message     String
+  metadata    String      @default("{}")
+  createdAt   DateTime    @default(now())
+  workspace   Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
