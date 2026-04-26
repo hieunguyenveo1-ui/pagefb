@@ -1,8 +1,9 @@
 @import "tailwindcss";
 
 :root {
-  --background: #f1f5f9;
-  --foreground: #0f172a;
+  --background: #f5f5f7;
+  --foreground: #1d1d1f;
+  --accent: #0071e3;
 }
 
 @theme inline {
@@ -13,7 +14,10 @@
 }
 
 body {
-  background: var(--background);
+  background:
+    radial-gradient(circle at 12% 4%, rgba(0, 113, 227, 0.18), transparent 30rem),
+    radial-gradient(circle at 88% 12%, rgba(175, 82, 222, 0.12), transparent 28rem),
+    linear-gradient(180deg, #fbfbfd 0%, #f5f5f7 46%, #ffffff 100%);
   color: var(--foreground);
   min-height: 100vh;
   text-rendering: optimizeLegibility;
@@ -21,7 +25,63 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
 ::selection {
-  background: #2563eb;
+  background: var(--accent);
   color: #ffffff;
+}
+
+.apple-glass {
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: 0 28px 70px -42px rgba(29, 29, 31, 0.55);
+  backdrop-filter: blur(28px) saturate(180%);
+}
+
+.apple-card {
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: 0 22px 55px -44px rgba(29, 29, 31, 0.6);
+}
+
+.apple-input {
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65);
+}
+
+.apple-input:focus {
+  border-color: rgba(0, 113, 227, 0.55);
+  box-shadow: 0 0 0 5px rgba(0, 113, 227, 0.1);
+}
+
+.apple-primary {
+  background: linear-gradient(180deg, #1677f2 0%, #0071e3 100%);
+  box-shadow: 0 16px 34px -18px rgba(0, 113, 227, 0.85);
+}
+
+.apple-primary:hover {
+  filter: brightness(1.03);
+}
+
+.apple-eyebrow {
+  color: #6e6e73;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
 }
