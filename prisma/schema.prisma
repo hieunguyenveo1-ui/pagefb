@@ -20,6 +20,7 @@ enum FacebookPageStatus {
 
 enum PostStatus {
   DRAFT
+  REVIEW
   SCHEDULED
   QUEUED
   PUBLISHING
@@ -49,10 +50,51 @@ enum AuditAction {
   PAGE_CREATED
   POST_CREATED
   POST_UPDATED
+  POST_APPROVED
   POST_SCHEDULED
   POST_PUBLISHED
   POST_FAILED
   SAFETY_WARNING
+  AI_PROVIDER_CONFIGURED
+  AI_PROMPT_CREATED
+  AI_CONTENT_GENERATED
+  INBOX_MESSAGE_RECEIVED
+  INBOX_REPLY_SUGGESTED
+}
+
+enum AiProviderKind {
+  OPENAI
+  GEMINI
+  CLAUDE
+  GROK
+  VEO3
+  CUSTOM
+}
+
+enum AiGenerationStatus {
+  DRAFT
+  REVIEW
+  APPROVED
+  REJECTED
+  CONVERTED_TO_POST
+}
+
+enum ConversationStatus {
+  OPEN
+  PENDING
+  RESOLVED
+  SPAM
+}
+
+enum ConversationChannel {
+  MESSENGER
+  COMMENT
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+  AI_SUGGESTION
 }
 
 model Workspace {
@@ -68,6 +110,11 @@ model Workspace {
   posts            Post[]
   publishJobs      PublishJob[]
   auditLogs        AuditLog[]
+  aiProviders      AiProvider[]
+  promptTemplates  PromptTemplate[]
+  aiGenerations    AiGeneration[]
+  conversations    Conversation[]
+  messages         InboxMessage[]
 }
 
 model FacebookAccount {
@@ -107,6 +154,7 @@ model FacebookPage {
   account           FacebookAccount    @relation(fields: [accountId], references: [id], onDelete: Cascade)
   targets           PostTarget[]
   publishJobs       PublishJob[]
+  conversations      Conversation[]
 
   @@unique([workspaceId, facebookPageId])
 }
@@ -128,6 +176,7 @@ model Post {
   workspace       Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   targets         PostTarget[]
   publishJobs     PublishJob[]
+  aiGenerations   AiGeneration[]
 }
 
 model PostTarget {
@@ -175,4 +224,97 @@ model AuditLog {
   metadata    String      @default("{}")
   createdAt   DateTime    @default(now())
   workspace   Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
+model AiProvider {
+  id            String         @id @default(cuid())
+  workspaceId   String
+  kind          AiProviderKind
+  name          String
+  apiKeyHint    String?
+  baseUrl       String?
+  model         String
+  enabled       Boolean        @default(true)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  workspace     Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  generations   AiGeneration[]
+
+  @@unique([workspaceId, name])
+}
+
+model PromptTemplate {
+  id             String         @id @default(cuid())
+  workspaceId    String
+  name           String
+  goal           String
+  tone           String
+  language       String         @default("vi")
+  prompt         String
+  variables      String         @default("[]")
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  workspace      Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  generations    AiGeneration[]
+
+  @@unique([workspaceId, name])
+}
+
+model AiGeneration {
+  id               String             @id @default(cuid())
+  workspaceId      String
+  providerId       String
+  templateId       String
+  postId           String?
+  topic            String
+  audience         String
+  caption          String
+  hashtags         String             @default("[]")
+  variants         String             @default("[]")
+  status           AiGenerationStatus @default(REVIEW)
+  reviewNotes      String?
+  approvedByName   String?
+  approvedAt       DateTime?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  workspace        Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  provider         AiProvider         @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  template         PromptTemplate     @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  post             Post?              @relation(fields: [postId], references: [id], onDelete: SetNull)
+}
+
+model Conversation {
+  id                    String              @id @default(cuid())
+  workspaceId           String
+  pageId                String
+  channel               ConversationChannel
+  customerName          String
+  customerExternalId    String
+  subject               String
+  status                ConversationStatus  @default(OPEN)
+  priority              Int                 @default(2)
+  lastMessageAt         DateTime            @default(now())
+  assignedToName        String?
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+  workspace             Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  page                  FacebookPage        @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  messages              InboxMessage[]
+
+  @@unique([workspaceId, channel, customerExternalId, pageId])
+}
+
+model InboxMessage {
+  id                 String            @id @default(cuid())
+  workspaceId        String
+  conversationId     String
+  externalMessageId  String?
+  direction          MessageDirection
+  body               String
+  aiSuggested        Boolean           @default(false)
+  confidenceScore    Int               @default(0)
+  sentAt             DateTime          @default(now())
+  createdAt          DateTime          @default(now())
+  workspace          Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  conversation       Conversation      @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 }

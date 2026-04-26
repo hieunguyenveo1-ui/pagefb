@@ -58,7 +58,7 @@ async function main() {
   ];
 
   for (const page of pages) {
-    await prisma.facebookPage.upsert({
+    const createdPage = await prisma.facebookPage.upsert({
       where: {
         workspaceId_facebookPageId: {
           workspaceId: workspace.id,
@@ -75,6 +75,124 @@ async function main() {
         followersCount: page.followersCount,
         accessTokenHint: "mock-page-token",
         lastSyncedAt: new Date(),
+      },
+    });
+
+    if (page.facebookPageId === "page-demo-001") {
+      const conversation = await prisma.conversation.upsert({
+        where: {
+          workspaceId_channel_customerExternalId_pageId: {
+            workspaceId: workspace.id,
+            channel: "MESSENGER",
+            customerExternalId: "customer-demo-001",
+            pageId: createdPage.id,
+          },
+        },
+        update: {},
+        create: {
+          workspaceId: workspace.id,
+          pageId: createdPage.id,
+          channel: "MESSENGER",
+          customerExternalId: "customer-demo-001",
+          customerName: "Minh Anh",
+          subject: "Hỏi demo quản lý fanpage",
+          priority: 1,
+        },
+      });
+
+      const existingMessage = await prisma.inboxMessage.findFirst({
+        where: {
+          workspaceId: workspace.id,
+          conversationId: conversation.id,
+          externalMessageId: "msg-demo-001",
+        },
+      });
+
+      if (!existingMessage) {
+        await prisma.inboxMessage.createMany({
+          data: [
+            {
+              workspaceId: workspace.id,
+              conversationId: conversation.id,
+              externalMessageId: "msg-demo-001",
+              direction: "INBOUND",
+              body: "Shop mình có 5 fanpage, muốn xem demo đăng bài theo lịch và quản lý inbox thì chi phí thế nào?",
+            },
+            {
+              workspaceId: workspace.id,
+              conversationId: conversation.id,
+              direction: "AI_SUGGESTION",
+              body: "Chào Minh Anh, bên em có thể demo quy trình quản lý 5 fanpage, lập lịch đăng bài và gom inbox vào một màn hình. Anh/chị cho em xin ngành hàng để tư vấn gói phù hợp ạ?",
+              aiSuggested: true,
+              confidenceScore: 88,
+            },
+          ],
+        });
+      }
+    }
+  }
+
+  const provider = await prisma.aiProvider.upsert({
+    where: {
+      workspaceId_name: {
+        workspaceId: workspace.id,
+        name: "Mock GPT Workspace",
+      },
+    },
+    update: {},
+    create: {
+      workspaceId: workspace.id,
+      kind: "OPENAI",
+      name: "Mock GPT Workspace",
+      model: "gpt-4o-mini",
+      apiKeyHint: "mock••••demo",
+      enabled: true,
+    },
+  });
+
+  const template = await prisma.promptTemplate.upsert({
+    where: {
+      workspaceId_name: {
+        workspaceId: workspace.id,
+        name: "Caption bán hàng thân thiện",
+      },
+    },
+    update: {},
+    create: {
+      workspaceId: workspace.id,
+      name: "Caption bán hàng thân thiện",
+      goal: "Tạo bài đăng bán hàng nhưng không spam, có CTA rõ ràng",
+      tone: "Chuyên nghiệp, thân thiện, đáng tin cậy",
+      language: "vi",
+      prompt:
+        "Viết caption Facebook tiếng Việt cho {{topic}}, hướng tới {{audience}}. Tạo CTA rõ ràng, hashtag phù hợp và 3 biến thể ngắn để A/B test.",
+    },
+  });
+
+  const existingGeneration = await prisma.aiGeneration.findFirst({
+    where: {
+      workspaceId: workspace.id,
+      topic: "Ra mắt dịch vụ quản lý fanpage bằng AI",
+    },
+  });
+
+  if (!existingGeneration) {
+    await prisma.aiGeneration.create({
+      data: {
+        workspaceId: workspace.id,
+        providerId: provider.id,
+        templateId: template.id,
+        topic: "Ra mắt dịch vụ quản lý fanpage bằng AI",
+        audience: "chủ shop, agency và đội marketing SME",
+        caption:
+          "Quản lý nhiều fanpage không cần rối.\n\nFanpage Manager Pro giúp đội marketing lập lịch đăng bài, kiểm duyệt nội dung AI và chăm sóc inbox tập trung trên một dashboard.\n\nĐăng ký demo để xem workflow phù hợp với mô hình của bạn.",
+        hashtags: JSON.stringify(["#FanpageManager", "#AIStudio", "#SocialCommerce", "#ChamSocKhachHang"]),
+        variants: JSON.stringify([
+          "Tập trung toàn bộ fanpage, lịch đăng và inbox vào một nơi để đội marketing vận hành chuyên nghiệp hơn.",
+          "Dùng AI để tạo caption, hashtag và biến thể nhưng vẫn có bước duyệt trước khi đăng.",
+          "Theo dõi account, fanpage, queue đăng bài và hội thoại khách hàng trong một dashboard SaaS.",
+        ]),
+        status: "REVIEW",
       },
     });
   }

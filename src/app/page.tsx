@@ -1,7 +1,9 @@
 import { PostStatus } from "@prisma/client";
 import { connection } from "next/server";
 import { AccountPageManager } from "@/components/account-page-manager";
+import { AiStudio } from "@/components/ai-studio";
 import { PostComposer } from "@/components/post-composer";
+import { UnifiedInbox } from "@/components/unified-inbox";
 import { prisma } from "@/lib/prisma";
 import { getDefaultWorkspace } from "@/lib/workspace";
 
@@ -36,7 +38,7 @@ export default async function Home() {
   await connection();
 
   const workspace = await getDefaultWorkspace();
-  const [accounts, pages, posts, jobs, auditLogs] = await Promise.all([
+  const [accounts, pages, posts, jobs, auditLogs, providers, templates, generations, conversations] = await Promise.all([
     prisma.facebookAccount.findMany({
       where: { workspaceId: workspace.id },
       include: { pages: true },
@@ -73,11 +75,42 @@ export default async function Home() {
       orderBy: { createdAt: "desc" },
       take: 8,
     }),
+    prisma.aiProvider.findMany({
+      where: { workspaceId: workspace.id },
+      orderBy: { createdAt: "desc" },
+    }),
+    prisma.promptTemplate.findMany({
+      where: { workspaceId: workspace.id },
+      orderBy: { createdAt: "desc" },
+    }),
+    prisma.aiGeneration.findMany({
+      where: { workspaceId: workspace.id },
+      include: {
+        provider: true,
+        template: true,
+      },
+      orderBy: { createdAt: "desc" },
+      take: 6,
+    }),
+    prisma.conversation.findMany({
+      where: { workspaceId: workspace.id },
+      include: {
+        page: true,
+        messages: {
+          orderBy: { sentAt: "desc" },
+          take: 6,
+        },
+      },
+      orderBy: { lastMessageAt: "desc" },
+      take: 8,
+    }),
   ]);
 
   const scheduledPosts = posts.filter((post) => post.status === PostStatus.SCHEDULED).length;
   const publishedPosts = posts.filter((post) => post.status === PostStatus.PUBLISHED).length;
   const draftPosts = posts.filter((post) => post.status === PostStatus.DRAFT).length;
+  const reviewGenerations = generations.filter((generation) => generation.status === "REVIEW").length;
+  const openConversations = conversations.filter((conversation) => conversation.status === "OPEN").length;
 
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(59,130,246,0.14),_transparent_22%),linear-gradient(180deg,#f8fbff_0%,#eef4ff_35%,#f8fafc_100%)] text-slate-950">
@@ -104,6 +137,8 @@ export default async function Home() {
             {[
               ["Dashboard overview", "Tổng quan realtime"],
               ["Campaign composer", "Tạo nội dung và lên lịch"],
+              ["AI Studio", "Prompt, biến thể, duyệt nội dung"],
+              ["Unified Inbox", "Message/comment + AI reply"],
               ["Accounts & pages", "Quản trị kết nối"],
               ["Safety & compliance", "Kiểm soát rủi ro"],
             ].map(([title, description], index) => (
@@ -147,7 +182,7 @@ export default async function Home() {
                 {[
                   ["Workspace health", "Ổn định", "bg-emerald-50 text-emerald-700"],
                   ["Publish mode", "Mock", "bg-blue-50 text-blue-700"],
-                  ["Commercial UI", "Ready", "bg-violet-50 text-violet-700"],
+                  ["AI Studio", `${providers.length} provider`, "bg-violet-50 text-violet-700"],
                 ].map(([label, value, tone]) => (
                   <div key={label} className="rounded-3xl border border-slate-200 bg-slate-50/70 p-4">
                     <p className="text-sm text-slate-500">{label}</p>
@@ -163,8 +198,8 @@ export default async function Home() {
               ["Facebook accounts", accounts.length, "Tài khoản đã kết nối vào workspace."],
               ["Fanpages", pages.length, "Kênh phân phối sẵn sàng cho chiến dịch."],
               ["Draft posts", draftPosts, "Nội dung chờ duyệt hoặc hoàn thiện."],
-              ["Scheduled posts", scheduledPosts, "Bài đã đưa vào lịch đăng."],
-              ["Published posts", publishedPosts, "Bài đã publish thành công."],
+              ["AI review", reviewGenerations, "Caption/hashtag/biến thể đang chờ duyệt."],
+              ["Open inbox", openConversations, "Tin nhắn/comment cần chăm sóc."],
             ].map(([label, value, hint], index) => (
               <div
                 key={label}
@@ -178,6 +213,10 @@ export default async function Home() {
               </div>
             ))}
           </section>
+
+          <AiStudio providers={providers} templates={templates} generations={generations} pages={pages} />
+
+          <UnifiedInbox conversations={conversations} />
 
           <div className="grid gap-6 2xl:grid-cols-[1.35fr_0.95fr]">
             <PostComposer pages={pages} />
