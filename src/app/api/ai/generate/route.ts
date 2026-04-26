@@ -1,6 +1,6 @@
 import { generateCampaignContent } from "@/lib/ai";
 import { prisma } from "@/lib/prisma";
-import { assessPostSafety } from "@/lib/safety";
+import { assessPostSafety, buildSafetyContext } from "@/lib/safety";
 import { aiGenerateSchema } from "@/lib/validation";
 import { getDefaultWorkspace } from "@/lib/workspace";
 
@@ -35,18 +35,6 @@ export async function POST(request: Request) {
     templateName: template.name,
     tone: template.tone,
   });
-  const now = new Date();
-  const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
-  const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-  const [existingHourlyPosts, existingDailyPosts, recentPosts] = await Promise.all([
-    prisma.publishJob.count({ where: { workspaceId: workspace.id, runAt: { gte: oneHourAgo } } }),
-    prisma.publishJob.count({ where: { workspaceId: workspace.id, runAt: { gte: oneDayAgo } } }),
-    prisma.post.findMany({
-      where: { workspaceId: workspace.id, createdAt: { gte: oneDayAgo } },
-      select: { message: true },
-      take: 30,
-    }),
-  ]);
   const safety = assessPostSafety(
     {
       title: input.topic,
@@ -54,13 +42,7 @@ export async function POST(request: Request) {
       pageIds: pages.map((page) => page.id),
       action: "draft",
     },
-    {
-      hourlyPostLimit: workspace.hourlyPostLimit,
-      dailyPostLimit: workspace.dailyPostLimit,
-      existingHourlyPosts,
-      existingDailyPosts,
-      similarMessages: recentPosts.map((post) => post.message),
-    },
+    await buildSafetyContext(prisma, workspace, pages),
   );
   const generation = await prisma.aiGeneration.create({
     data: {

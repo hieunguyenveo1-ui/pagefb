@@ -1,5 +1,6 @@
 import { PostStatus, PostTargetStatus, PublishJobStatus } from "@prisma/client";
-import { assessPostSafety } from "@/lib/safety";
+import { persistSafetyReview } from "@/lib/approval";
+import { assessPostSafety, buildSafetyContext } from "@/lib/safety";
 import { postSchema } from "@/lib/validation";
 import { getDefaultWorkspace } from "@/lib/workspace";
 import { prisma } from "@/lib/prisma";
@@ -29,59 +30,22 @@ export async function POST(request: Request) {
   }
 
   const now = new Date();
-  const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
-  const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
   const runAt = input.action === "publish" ? now : input.scheduledAt ? new Date(input.scheduledAt) : null;
 
   if (input.action === "schedule" && (!runAt || runAt.getTime() <= now.getTime())) {
     return Response.json({ message: "Scheduled time must be in the future." }, { status: 400 });
   }
 
-  const [existingHourlyPosts, existingDailyPosts, recentPosts] = await Promise.all([
-    prisma.publishJob.count({
-      where: {
-        workspaceId: workspace.id,
-        runAt: { gte: oneHourAgo },
-      },
-    }),
-    prisma.publishJob.count({
-      where: {
-        workspaceId: workspace.id,
-        runAt: { gte: oneDayAgo },
-      },
-    }),
-    prisma.post.findMany({
-      where: {
-        workspaceId: workspace.id,
-        createdAt: { gte: oneDayAgo },
-      },
-      select: {
-        message: true,
-      },
-      take: 30,
-    }),
-  ]);
-
-  const safety = assessPostSafety(input, {
-    hourlyPostLimit: workspace.hourlyPostLimit,
-    dailyPostLimit: workspace.dailyPostLimit,
-    existingHourlyPosts,
-    existingDailyPosts,
-    similarMessages: recentPosts.map((post) => post.message),
-  });
-
-  if (input.action !== "draft" && safety.score >= 70) {
-    return Response.json(
-      {
-        message: "Safety guard blocked publishing. Save as draft or reduce selected pages/frequency.",
-        safety,
-      },
-      { status: 409 },
-    );
-  }
+  const safety = assessPostSafety(input, await buildSafetyContext(prisma, workspace, pages));
 
   const status =
-    input.action === "draft" ? PostStatus.DRAFT : input.action === "publish" ? PostStatus.QUEUED : PostStatus.SCHEDULED;
+    input.action === "draft" || safety.needsApproval
+      ? safety.needsApproval
+        ? PostStatus.REVIEW
+        : PostStatus.DRAFT
+      : input.action === "publish"
+        ? PostStatus.QUEUED
+        : PostStatus.SCHEDULED;
 
   const post = await prisma.post.create({
     data: {
@@ -97,11 +61,11 @@ export async function POST(request: Request) {
       targets: {
         create: pages.map((page) => ({
           pageId: page.id,
-          status: input.action === "draft" ? PostTargetStatus.PENDING : PostTargetStatus.QUEUED,
+          status: input.action === "draft" || safety.needsApproval ? PostTargetStatus.PENDING : PostTargetStatus.QUEUED,
         })),
       },
       publishJobs:
-        input.action === "draft" || !runAt
+        input.action === "draft" || safety.needsApproval || !runAt
           ? undefined
           : {
               create: pages.map((page) => ({
@@ -122,14 +86,16 @@ export async function POST(request: Request) {
     },
   });
 
+  await persistSafetyReview(prisma, post, safety, input.action, runAt);
+
   await prisma.auditLog.create({
     data: {
       workspaceId: workspace.id,
-      action: input.action === "draft" ? "POST_CREATED" : "POST_SCHEDULED",
+      action: input.action === "draft" || safety.needsApproval ? "POST_CREATED" : "POST_SCHEDULED",
       actorName: "Admin",
       entityType: "Post",
       entityId: post.id,
-      message: `${input.action === "draft" ? "Created" : "Queued"} post "${post.title}" for ${pages.length} fanpage(s).`,
+      message: `${safety.needsApproval ? "Created review request for" : input.action === "draft" ? "Created" : "Queued"} post "${post.title}" for ${pages.length} fanpage(s).`,
       metadata: JSON.stringify({ safety }),
     },
   });
@@ -148,5 +114,14 @@ export async function POST(request: Request) {
     });
   }
 
-  return Response.json({ post, safety }, { status: 201 });
+  return Response.json(
+    {
+      post,
+      safety,
+      message: safety.needsApproval
+        ? "Post saved for approval before publishing because risk score requires review."
+        : "Post accepted.",
+    },
+    { status: 201 },
+  );
 }

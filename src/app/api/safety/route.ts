@@ -1,4 +1,4 @@
-import { assessPostSafety } from "@/lib/safety";
+import { assessPostSafety, buildSafetyContext } from "@/lib/safety";
 import { postSchema } from "@/lib/validation";
 import { getDefaultWorkspace } from "@/lib/workspace";
 import { prisma } from "@/lib/prisma";
@@ -13,42 +13,16 @@ export async function POST(request: Request) {
   }
 
   const input = parsed.data;
-  const now = new Date();
-  const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
-  const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-
-  const [existingHourlyPosts, existingDailyPosts, recentPosts] = await Promise.all([
-    prisma.publishJob.count({
-      where: {
-        workspaceId: workspace.id,
-        runAt: { gte: oneHourAgo },
+  const pages = await prisma.facebookPage.findMany({
+    where: {
+      workspaceId: workspace.id,
+      id: {
+        in: input.pageIds,
       },
-    }),
-    prisma.publishJob.count({
-      where: {
-        workspaceId: workspace.id,
-        runAt: { gte: oneDayAgo },
-      },
-    }),
-    prisma.post.findMany({
-      where: {
-        workspaceId: workspace.id,
-        createdAt: { gte: oneDayAgo },
-      },
-      select: {
-        message: true,
-      },
-      take: 30,
-    }),
-  ]);
-
-  const safety = assessPostSafety(input, {
-    hourlyPostLimit: workspace.hourlyPostLimit,
-    dailyPostLimit: workspace.dailyPostLimit,
-    existingHourlyPosts,
-    existingDailyPosts,
-    similarMessages: recentPosts.map((post) => post.message),
+    },
   });
+
+  const safety = assessPostSafety(input, await buildSafetyContext(prisma, workspace, pages));
 
   return Response.json({ safety });
 }

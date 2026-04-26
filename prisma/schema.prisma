@@ -55,6 +55,10 @@ enum AuditAction {
   POST_PUBLISHED
   POST_FAILED
   SAFETY_WARNING
+  APPROVAL_REQUESTED
+  APPROVAL_APPROVED
+  APPROVAL_REJECTED
+  RISK_SIGNAL_CREATED
   AI_PROVIDER_CONFIGURED
   AI_PROMPT_CREATED
   AI_CONTENT_GENERATED
@@ -97,12 +101,27 @@ enum MessageDirection {
   AI_SUGGESTION
 }
 
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum RiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+  BLOCKED
+}
+
 model Workspace {
   id               String            @id @default(cuid())
   name             String
   slug             String            @unique
   dailyPostLimit   Int               @default(12)
   hourlyPostLimit  Int               @default(4)
+  approvalThreshold Int              @default(40)
+  blockThreshold    Int              @default(70)
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
   accounts         FacebookAccount[]
@@ -115,6 +134,8 @@ model Workspace {
   aiGenerations    AiGeneration[]
   conversations    Conversation[]
   messages         InboxMessage[]
+  approvalRequests ApprovalRequest[]
+  riskSignals      RiskSignal[]
 }
 
 model FacebookAccount {
@@ -147,6 +168,8 @@ model FacebookPage {
   accessTokenHint   String?
   status            FacebookPageStatus @default(ACTIVE)
   followersCount    Int                @default(0)
+  hourlyPostLimit    Int                @default(2)
+  dailyPostLimit     Int                @default(6)
   lastSyncedAt      DateTime?
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt
@@ -155,6 +178,7 @@ model FacebookPage {
   targets           PostTarget[]
   publishJobs       PublishJob[]
   conversations      Conversation[]
+  riskSignals        RiskSignal[]
 
   @@unique([workspaceId, facebookPageId])
 }
@@ -177,6 +201,8 @@ model Post {
   targets         PostTarget[]
   publishJobs     PublishJob[]
   aiGenerations   AiGeneration[]
+  approvalRequests ApprovalRequest[]
+  riskSignals      RiskSignal[]
 }
 
 model PostTarget {
@@ -224,6 +250,42 @@ model AuditLog {
   metadata    String      @default("{}")
   createdAt   DateTime    @default(now())
   workspace   Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
+model ApprovalRequest {
+  id              String         @id @default(cuid())
+  workspaceId     String
+  postId          String
+  status          ApprovalStatus @default(PENDING)
+  riskScore       Int
+  riskLevel       RiskLevel
+  requestedAction String         @default("draft")
+  requestedRunAt  DateTime?
+  reasons         String         @default("[]")
+  requestedByName String         @default("Safety Guard")
+  reviewedByName  String?
+  reviewNotes     String?
+  reviewedAt      DateTime?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  workspace       Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  post            Post           @relation(fields: [postId], references: [id], onDelete: Cascade)
+}
+
+model RiskSignal {
+  id          String    @id @default(cuid())
+  workspaceId String
+  postId      String?
+  pageId      String?
+  level       RiskLevel
+  score       Int
+  category    String
+  message     String
+  metadata    String    @default("{}")
+  createdAt   DateTime  @default(now())
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  post        Post?     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  page        FacebookPage? @relation(fields: [pageId], references: [id], onDelete: SetNull)
 }
 
 model AiProvider {

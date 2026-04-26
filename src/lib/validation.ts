@@ -75,4 +75,10 @@ export const inboxSuggestSchema = z.object({
   providerId: z.string().trim().min(1).optional().or(z.literal("")),
 });
 
+export const approvalReviewSchema = z.object({
+  approvalRequestId: z.string().trim().min(1),
+  decision: z.enum(["approve", "reject"]),
+  reviewNotes: z.string().trim().max(500).optional().or(z.literal("")),
+});
+
 export type AiGenerateInput = z.infer<typeof aiGenerateSchema>;

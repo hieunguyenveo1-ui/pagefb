@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
-import { assessPostSafety } from "@/lib/safety";
+import { persistSafetyReview } from "@/lib/approval";
+import { assessPostSafety, buildSafetyContext } from "@/lib/safety";
 import { aiApproveSchema } from "@/lib/validation";
 import { getDefaultWorkspace } from "@/lib/workspace";
 
@@ -29,18 +30,6 @@ export async function POST(request: Request) {
     return Response.json({ message: "Select at least one valid fanpage." }, { status: 400 });
   }
 
-  const now = new Date();
-  const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
-  const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-  const [existingHourlyPosts, existingDailyPosts, recentPosts] = await Promise.all([
-    prisma.publishJob.count({ where: { workspaceId: workspace.id, runAt: { gte: oneHourAgo } } }),
-    prisma.publishJob.count({ where: { workspaceId: workspace.id, runAt: { gte: oneDayAgo } } }),
-    prisma.post.findMany({
-      where: { workspaceId: workspace.id, createdAt: { gte: oneDayAgo } },
-      select: { message: true },
-      take: 30,
-    }),
-  ]);
   const safety = assessPostSafety(
     {
       title: generation.topic,
@@ -49,32 +38,27 @@ export async function POST(request: Request) {
       scheduledAt: input.scheduledAt || undefined,
       action: input.action,
     },
-    {
-      hourlyPostLimit: workspace.hourlyPostLimit,
-      dailyPostLimit: workspace.dailyPostLimit,
-      existingHourlyPosts,
-      existingDailyPosts,
-      similarMessages: recentPosts.map((post) => post.message),
-    },
+    await buildSafetyContext(prisma, workspace, pages),
   );
   const scheduledAt = input.action === "schedule" && input.scheduledAt ? new Date(input.scheduledAt) : null;
+  const shouldQueue = input.action === "schedule" && scheduledAt && !safety.needsApproval;
   const post = await prisma.post.create({
     data: {
       workspaceId: workspace.id,
       title: generation.topic,
       message: generation.caption,
       scheduledAt,
-      status: input.action === "schedule" ? "SCHEDULED" : "DRAFT",
+      status: safety.needsApproval ? "REVIEW" : input.action === "schedule" ? "SCHEDULED" : "DRAFT",
       safetyScore: safety.score,
       safetyWarnings: JSON.stringify(safety.warnings),
       targets: {
         create: pages.map((page) => ({
           pageId: page.id,
-          status: input.action === "schedule" ? "QUEUED" : "PENDING",
+          status: shouldQueue ? "QUEUED" : "PENDING",
         })),
       },
       publishJobs:
-        input.action === "schedule" && scheduledAt
+        shouldQueue
           ? {
               create: pages.map((page) => ({
                 workspaceId: workspace.id,
@@ -86,6 +70,8 @@ export async function POST(request: Request) {
           : undefined,
     },
   });
+
+  await persistSafetyReview(prisma, post, safety, input.action, scheduledAt);
 
   await prisma.aiGeneration.update({
     where: { id: generation.id },
@@ -106,16 +92,16 @@ export async function POST(request: Request) {
         actorName: "Admin",
         entityType: "AiGeneration",
         entityId: generation.id,
-        message: `Approved AI content and converted it to ${input.action === "schedule" ? "a scheduled post" : "a draft"}.`,
+        message: `Approved AI content and converted it to ${safety.needsApproval ? "a review post" : input.action === "schedule" ? "a scheduled post" : "a draft"}.`,
         metadata: JSON.stringify({ safety }),
       },
       {
         workspaceId: workspace.id,
-        action: input.action === "schedule" ? "POST_SCHEDULED" : "POST_CREATED",
+        action: shouldQueue ? "POST_SCHEDULED" : "POST_CREATED",
         actorName: "Admin",
         entityType: "Post",
         entityId: post.id,
-        message: `Created post from AI Studio for ${pages.length} fanpage(s).`,
+        message: `Created ${safety.needsApproval ? "review" : "post"} from AI Studio for ${pages.length} fanpage(s).`,
       },
     ],
   });

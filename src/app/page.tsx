@@ -3,6 +3,7 @@ import { connection } from "next/server";
 import { AccountPageManager } from "@/components/account-page-manager";
 import { AiStudio } from "@/components/ai-studio";
 import { PostComposer } from "@/components/post-composer";
+import { RiskDashboard } from "@/components/risk-dashboard";
 import { UnifiedInbox } from "@/components/unified-inbox";
 import { prisma } from "@/lib/prisma";
 import { getDefaultWorkspace } from "@/lib/workspace";
@@ -38,7 +39,19 @@ export default async function Home() {
   await connection();
 
   const workspace = await getDefaultWorkspace();
-  const [accounts, pages, posts, jobs, auditLogs, providers, templates, generations, conversations] = await Promise.all([
+  const [
+    accounts,
+    pages,
+    posts,
+    jobs,
+    auditLogs,
+    providers,
+    templates,
+    generations,
+    conversations,
+    approvals,
+    riskSignals,
+  ] = await Promise.all([
     prisma.facebookAccount.findMany({
       where: { workspaceId: workspace.id },
       include: { pages: true },
@@ -104,13 +117,28 @@ export default async function Home() {
       orderBy: { lastMessageAt: "desc" },
       take: 8,
     }),
+    prisma.approvalRequest.findMany({
+      where: { workspaceId: workspace.id },
+      include: { post: true },
+      orderBy: { createdAt: "desc" },
+      take: 8,
+    }),
+    prisma.riskSignal.findMany({
+      where: { workspaceId: workspace.id },
+      include: {
+        page: true,
+        post: true,
+      },
+      orderBy: { createdAt: "desc" },
+      take: 12,
+    }),
   ]);
 
   const scheduledPosts = posts.filter((post) => post.status === PostStatus.SCHEDULED).length;
   const publishedPosts = posts.filter((post) => post.status === PostStatus.PUBLISHED).length;
   const draftPosts = posts.filter((post) => post.status === PostStatus.DRAFT).length;
-  const reviewGenerations = generations.filter((generation) => generation.status === "REVIEW").length;
   const openConversations = conversations.filter((conversation) => conversation.status === "OPEN").length;
+  const pendingApprovals = approvals.filter((approval) => approval.status === "PENDING").length;
 
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(59,130,246,0.14),_transparent_22%),linear-gradient(180deg,#f8fbff_0%,#eef4ff_35%,#f8fafc_100%)] text-slate-950">
@@ -198,7 +226,7 @@ export default async function Home() {
               ["Facebook accounts", accounts.length, "Tài khoản đã kết nối vào workspace."],
               ["Fanpages", pages.length, "Kênh phân phối sẵn sàng cho chiến dịch."],
               ["Draft posts", draftPosts, "Nội dung chờ duyệt hoặc hoàn thiện."],
-              ["AI review", reviewGenerations, "Caption/hashtag/biến thể đang chờ duyệt."],
+              ["Risk approvals", pendingApprovals, "Nội dung cần duyệt trước khi publish."],
               ["Open inbox", openConversations, "Tin nhắn/comment cần chăm sóc."],
             ].map(([label, value, hint], index) => (
               <div
@@ -213,6 +241,8 @@ export default async function Home() {
               </div>
             ))}
           </section>
+
+          <RiskDashboard workspace={workspace} pages={pages} approvals={approvals} riskSignals={riskSignals} />
 
           <AiStudio providers={providers} templates={templates} generations={generations} pages={pages} />
 
@@ -258,7 +288,8 @@ export default async function Home() {
                     {[
                       `Giới hạn giờ: ${workspace.hourlyPostLimit} post targets/giờ`,
                       `Giới hạn ngày: ${workspace.dailyPostLimit} post targets/ngày`,
-                      "Chặn tự động khi safety score từ 70 trở lên",
+                      `Yêu cầu duyệt thủ công khi safety score từ ${workspace.approvalThreshold}`,
+                      `Chặn publish trực tiếp khi safety score từ ${workspace.blockThreshold}`,
                       "Mock publish không gọi Meta API thật cho tới khi bật live mode",
                     ].map((item) => (
                       <div key={item} className="rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-600">

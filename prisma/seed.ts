@@ -10,12 +10,19 @@ const prisma = new PrismaClient({ adapter });
 async function main() {
   const workspace = await prisma.workspace.upsert({
     where: { slug: "demo-agency" },
-    update: {},
+    update: {
+      hourlyPostLimit: 4,
+      dailyPostLimit: 12,
+      approvalThreshold: 40,
+      blockThreshold: 70,
+    },
     create: {
       name: "Demo Agency",
       slug: "demo-agency",
       hourlyPostLimit: 4,
       dailyPostLimit: 12,
+      approvalThreshold: 40,
+      blockThreshold: 70,
     },
   });
 
@@ -65,7 +72,10 @@ async function main() {
           facebookPageId: page.facebookPageId,
         },
       },
-      update: {},
+      update: {
+        hourlyPostLimit: page.facebookPageId === "page-demo-001" ? 2 : 1,
+        dailyPostLimit: page.facebookPageId === "page-demo-001" ? 6 : 4,
+      },
       create: {
         workspaceId: workspace.id,
         accountId: account.id,
@@ -194,6 +204,89 @@ async function main() {
         ]),
         status: "REVIEW",
       },
+    });
+  }
+
+  const riskPost = await prisma.post.upsert({
+    where: {
+      id: "demo-risk-review-post",
+    },
+    update: {},
+    create: {
+      id: "demo-risk-review-post",
+      workspaceId: workspace.id,
+      title: "Chiến dịch cần duyệt: nội dung tương tự và CTA mạnh",
+      message:
+        "Demo miễn phí 100% cho shop muốn tăng trưởng fanpage nhanh. Đăng ký ngay để nhận tư vấn quản lý fanpage, inbox và lịch đăng tự động.",
+      status: "REVIEW",
+      safetyScore: 55,
+      safetyWarnings: JSON.stringify([
+        "Nội dung có độ tương đồng đáng chú ý (68%).",
+        "Nội dung chứa từ khóa marketing mạnh; nên kiểm duyệt thủ công trước khi đăng.",
+      ]),
+      targets: {
+        create: [
+          {
+            pageId: (await prisma.facebookPage.findFirstOrThrow({
+              where: { workspaceId: workspace.id, facebookPageId: "page-demo-001" },
+            })).id,
+            status: "PENDING",
+          },
+        ],
+      },
+    },
+  });
+
+  await prisma.approvalRequest.upsert({
+    where: {
+      id: "demo-approval-request-001",
+    },
+    update: {},
+    create: {
+      id: "demo-approval-request-001",
+      workspaceId: workspace.id,
+      postId: riskPost.id,
+      status: "PENDING",
+      riskScore: 55,
+      riskLevel: "HIGH",
+      requestedAction: "schedule",
+      requestedRunAt: new Date(Date.now() + 3 * 60 * 60 * 1000),
+      reasons: JSON.stringify([
+        "Nội dung có độ tương đồng đáng chú ý (68%).",
+        "Nội dung chứa từ khóa marketing mạnh; nên kiểm duyệt thủ công trước khi đăng.",
+      ]),
+    },
+  });
+
+  const existingSignal = await prisma.riskSignal.findFirst({
+    where: {
+      workspaceId: workspace.id,
+      postId: riskPost.id,
+      category: "similarity",
+    },
+  });
+
+  if (!existingSignal) {
+    await prisma.riskSignal.createMany({
+      data: [
+        {
+          workspaceId: workspace.id,
+          postId: riskPost.id,
+          level: "HIGH",
+          score: 30,
+          category: "similarity",
+          message: "Nội dung có độ tương đồng đáng chú ý (68%).",
+          metadata: JSON.stringify({ similarity: 68 }),
+        },
+        {
+          workspaceId: workspace.id,
+          postId: riskPost.id,
+          level: "HIGH",
+          score: 10,
+          category: "marketing_claim",
+          message: "Nội dung chứa từ khóa marketing mạnh; nên kiểm duyệt thủ công trước khi đăng.",
+        },
+      ],
     });
   }
 }
